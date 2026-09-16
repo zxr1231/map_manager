@@ -304,6 +304,7 @@ namespace mapManager{
 			this->occupancyInflated_.resize(reservedSize, false);
 			this->flagTraverse_.resize(reservedSize, -1);
 			this->flagRayend_.resize(reservedSize, -1);
+			this->sensorObservationTracker_.reset(reservedSize);
 
 			cout << this->hint_ << ": Map size: " << "[" << mapSizeVec[0] << ", " << mapSizeVec[1] << ", " << mapSizeVec[2] << "]" << endl;
 		}
@@ -534,6 +535,8 @@ namespace mapManager{
 		this->inflatedMapVisPub_ = this->nh_.advertise<sensor_msgs::PointCloud2>(this->ns_ + "/inflated_voxel_map", 10);
 		this->map2DPub_ = this->nh_.advertise<nav_msgs::OccupancyGrid>(this->ns_ + "/2D_occupancy_map", 10);
 		this->mapExploredPub_ = this->nh_.advertise<sensor_msgs::PointCloud2>(this->ns_+"/explored_voxel_map",10);
+		this->sensorObservationDeltaPub_ = this->nh_.advertise<map_manager::ObservedVoxelDelta>(
+			this->ns_ + "/sensor_observation_delta", 100);
 		// publish service
 		this->collisionCheckServer_ = this->nh_.advertiseService(this->ns_ + "/check_pos_collision", &occMap::checkCollision, this);
 		this->raycastServer_ = this->nh_.advertiseService(this->ns_ + "/raycast", &occMap::getRayCast, this);
@@ -585,6 +588,7 @@ namespace mapManager{
 	}
 	
 	void occMap::depthPoseCB(const sensor_msgs::ImageConstPtr& img, const geometry_msgs::PoseStampedConstPtr& pose){
+		this->sensorStamp_ = img->header.stamp;
 		// store current depth image
 		cv_bridge::CvImagePtr imgPtr = cv_bridge::toCvCopy(img, img->encoding);
 		if (img->encoding == sensor_msgs::image_encodings::TYPE_32FC1){
@@ -610,6 +614,7 @@ namespace mapManager{
 	}
 
 	void occMap::depthOdomCB(const sensor_msgs::ImageConstPtr& img, const nav_msgs::OdometryConstPtr& odom){
+		this->sensorStamp_ = img->header.stamp;
 		// store current depth image
 		cv_bridge::CvImagePtr imgPtr = cv_bridge::toCvCopy(img, img->encoding);
 		if (img->encoding == sensor_msgs::image_encodings::TYPE_32FC1){
@@ -635,6 +640,7 @@ namespace mapManager{
 	}
 
 	void occMap::pointcloudPoseCB(const sensor_msgs::PointCloud2ConstPtr& pointcloud, const geometry_msgs::PoseStampedConstPtr& pose){
+		this->sensorStamp_ = pointcloud->header.stamp;
 		// directly get the point cloud
 		pcl::PCLPointCloud2 pclPC2;
 		pcl_conversions::toPCL(*pointcloud, pclPC2); // convert ros pointcloud2 to pcl pointcloud2
@@ -658,6 +664,7 @@ namespace mapManager{
 	}
 
 	void occMap::pointcloudOdomCB(const sensor_msgs::PointCloud2ConstPtr& pointcloud, const nav_msgs::OdometryConstPtr& odom){
+		this->sensorStamp_ = pointcloud->header.stamp;
 		// directly get the point cloud
 		pcl::PCLPointCloud2 pclPC2;
 		pcl_conversions::toPCL(*pointcloud, pclPC2); // convert ros pointcloud2 to pcl pointcloud2
@@ -970,7 +977,24 @@ namespace mapManager{
 				}
 			}
 		}
+		this->publishSensorObservationDelta();
 
+	}
+
+	void occMap::publishSensorObservationDelta(){
+		const std::vector<uint32_t>& pending = this->sensorObservationTracker_.pending();
+		if (pending.empty() or this->sensorObservationDeltaPub_.getNumSubscribers() == 0){
+			return;
+		}
+		map_manager::ObservedVoxelDelta msg;
+		msg.header.stamp = this->sensorStamp_.isZero() ? ros::Time::now() : this->sensorStamp_;
+		msg.header.frame_id = "map";
+		msg.sequence = ++this->sensorObservationSequence_;
+		msg.observed_total = this->sensorObservationTracker_.observedTotal();
+		msg.raycast_id = static_cast<uint32_t>(this->raycastNum_);
+		msg.addresses.assign(pending.begin(), pending.end());
+		this->sensorObservationDeltaPub_.publish(msg);
+		this->sensorObservationTracker_.clearPending();
 	}
 
 	void occMap::cleanLocalMap(){

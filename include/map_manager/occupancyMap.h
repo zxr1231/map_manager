@@ -23,7 +23,9 @@
 #include <message_filters/sync_policies/approximate_time.h>
 #include <map_manager/raycast.h>
 #include <map_manager/CheckPosCollision.h>
+#include <map_manager/ObservedVoxelDelta.h>
 #include <map_manager/RayCast.h>
+#include <map_manager/sensorObservationTracker.h>
 #include <thread>
 
 using std::cout; using std::endl;
@@ -59,8 +61,9 @@ namespace mapManager{
 		ros::Publisher depthCloudPub_;
 		ros::Publisher mapVisPub_;
 		ros::Publisher inflatedMapVisPub_;
-		ros::Publisher map2DPub_;
-		ros::Publisher mapExploredPub_;
+			ros::Publisher map2DPub_;
+			ros::Publisher mapExploredPub_;
+			ros::Publisher sensorObservationDeltaPub_;
 		ros::ServiceServer collisionCheckServer_;
 		ros::ServiceServer raycastServer_;
 
@@ -113,9 +116,10 @@ namespace mapManager{
 		// -----------------------------------------------------------------
 		// SENSOR DATA
 		cv::Mat depthImage_;
-		pcl::PointCloud<pcl::PointXYZ> pointcloud_;
-		Eigen::Vector3d position_; // current position
-		Eigen::Matrix3d orientation_; // current orientation
+			pcl::PointCloud<pcl::PointXYZ> pointcloud_;
+			Eigen::Vector3d position_; // current position
+			Eigen::Matrix3d orientation_; // current orientation
+			ros::Time sensorStamp_;
 		Eigen::Vector3i localBoundMin_, localBoundMax_; // sensor data range
 
 
@@ -127,8 +131,10 @@ namespace mapManager{
 		std::queue<Eigen::Vector3i> updateVoxelCache_;
 		std::vector<double> occupancy_; // occupancy log data
 		std::vector<bool> occupancyInflated_; // inflated occupancy data
-		int raycastNum_ = 0; 
-		std::vector<int> flagTraverse_, flagRayend_;
+			int raycastNum_ = 0;
+			std::vector<int> flagTraverse_, flagRayend_;
+			SensorObservationTracker sensorObservationTracker_;
+			uint64_t sensorObservationSequence_ = 0;
 		std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> freeRegions_;
 		std::deque<std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>> histFreeRegions_;
 		Eigen::Vector3d currMapRangeMin_ = Eigen::Vector3d (0, 0, 0); 
@@ -172,9 +178,10 @@ namespace mapManager{
 
 		// core function
 		void projectDepthImage();
-		void getPointcloud();
-		void raycastUpdate();
-		void cleanLocalMap();
+			void getPointcloud();
+			void raycastUpdate();
+			void publishSensorObservationDelta();
+			void cleanLocalMap();
 		void inflateLocalMap();
 
 		// user functions
@@ -638,6 +645,7 @@ namespace mapManager{
 		if (isOccupied){ // if not adjusted set it to occupied, otherwise it is free
 			this->countHit_[voxelID] += 1;
 		}
+		this->sensorObservationTracker_.mark(voxelID);
 		return voxelID;
 	}
 

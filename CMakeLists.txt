@@ -55,11 +55,10 @@ find_package(PCL 1.7 REQUIRED)
 ##   * add every package in MSG_DEP_SET to generate_messages(DEPENDENCIES ...)
 
 ## Generate messages in the 'msg' folder
-# add_message_files(
-#   FILES
-#   Message1.msg
-#   Message2.msg
-# )
+add_message_files(
+  FILES
+  ObservedVoxelDelta.msg
+)
 
 ## Generate services in the 'srv' folder
 add_service_files(
@@ -114,7 +113,7 @@ generate_messages(
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES map_manager
- CATKIN_DEPENDS roscpp rospy std_msgs cv_bridge onboard_detector
+ CATKIN_DEPENDS roscpp rospy std_msgs message_runtime cv_bridge onboard_detector
  DEPENDS PCL
 )
 
@@ -223,10 +222,13 @@ install(DIRECTORY include/${PROJECT_NAME}/
 #############
 
 ## Add gtest based cpp test target and link libraries
-# catkin_add_gtest(${PROJECT_NAME}-test test/test_map_manager.cpp)
-# if(TARGET ${PROJECT_NAME}-test)
-#   target_link_libraries(${PROJECT_NAME}-test ${PROJECT_NAME})
-# endif()
+if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
+  add_rostest_gtest(sensor_observation_tracker_test
+                    test/sensor_observation_tracker.test
+                    test/sensor_observation_tracker_test.cpp)
+  target_link_libraries(sensor_observation_tracker_test ${PROJECT_NAME} ${catkin_LIBRARIES})
+endif()
 
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)
