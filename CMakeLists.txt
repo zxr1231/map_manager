@@ -222,7 +222,13 @@ install(DIRECTORY include/${PROJECT_NAME}/
 #############
 
 ## Add gtest based cpp test target and link libraries
-catkin_add_gtest(sensor_observation_tracker_test test/sensor_observation_tracker_test.cpp)
+if(CATKIN_ENABLE_TESTING)
+  find_package(rostest REQUIRED)
+  add_rostest_gtest(sensor_observation_tracker_test
+                    test/sensor_observation_tracker.test
+                    test/sensor_observation_tracker_test.cpp)
+  target_link_libraries(sensor_observation_tracker_test ${PROJECT_NAME} ${catkin_LIBRARIES})
+endif()
 
 ## Add folders to be run by python nosetests
 # catkin_add_nosetests(test)

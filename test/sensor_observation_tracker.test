@@ -1,0 +1,6 @@
+<launch>
+  <test test-name="sensor_observation_tracker_test"
+        pkg="map_manager"
+        type="sensor_observation_tracker_test"
+        time-limit="30.0" />
+</launch>

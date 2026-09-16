@@ -24,6 +24,7 @@
   <exec_depend>message_runtime</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>onboard_detector</exec_depend>
+  <test_depend>rostest</test_depend>
   <export>
 
   </export>
