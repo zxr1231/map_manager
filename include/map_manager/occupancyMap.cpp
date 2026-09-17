@@ -689,6 +689,7 @@ namespace mapManager{
 	}
 
 	void occMap::updateOccupancyCB(const ros::TimerEvent& ){
+		std::lock_guard<std::recursive_mutex> lock(this->snapshotMutex_);
 		if (not this->occNeedUpdate_){
 			return;
 		}
@@ -722,15 +723,33 @@ namespace mapManager{
 		}
 		this->occNeedUpdate_ = false;
 		this->mapNeedInflate_ = true;
+		++this->mapVersion_;
 	}
 
 	void occMap::inflateMapCB(const ros::TimerEvent& ){
+		std::lock_guard<std::recursive_mutex> lock(this->snapshotMutex_);
 		// inflate local map:
 		if (this->mapNeedInflate_){
 			this->inflateLocalMap();
 			this->mapNeedInflate_ = false;
 			this->esdfNeedUpdate_ = true;
+			++this->mapVersion_;
 		}
+	}
+
+	OccupancyMapSnapshot occMap::captureSnapshot() const{
+		std::lock_guard<std::recursive_mutex> lock(this->snapshotMutex_);
+		OccupancyMapSnapshot snapshot;
+		snapshot.version = this->mapVersion_;
+		snapshot.resolution = this->mapRes_;
+		snapshot.mapMin = this->mapSizeMin_;
+		snapshot.mapMax = this->mapSizeMax_;
+		snapshot.dimensions = this->mapVoxelMax_;
+		snapshot.pMinLog = this->pMinLog_;
+		snapshot.pOccLog = this->pOccLog_;
+		snapshot.occupancy = this->occupancy_;
+		snapshot.inflated = this->occupancyInflated_;
+		return snapshot;
 	}
 
 

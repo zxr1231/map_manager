@@ -27,9 +27,25 @@
 #include <map_manager/RayCast.h>
 #include <map_manager/sensorObservationTracker.h>
 #include <thread>
+#include <mutex>
+#include <cstdint>
 
 using std::cout; using std::endl;
 namespace mapManager{
+	// Immutable value copy used by offline exploration diagnostics.  It is a
+	// capture of the mapper's discrete state, not a new map representation.
+	struct OccupancyMapSnapshot{
+		uint64_t version = 0;
+		double resolution = 0.0;
+		Eigen::Vector3d mapMin = Eigen::Vector3d::Zero();
+		Eigen::Vector3d mapMax = Eigen::Vector3d::Zero();
+		Eigen::Vector3i dimensions = Eigen::Vector3i::Zero();
+		double pMinLog = 0.0;
+		double pOccLog = 0.0;
+		std::vector<double> occupancy;
+		std::vector<bool> inflated;
+	};
+
 	class occMap{
 	private:
 
@@ -140,6 +156,8 @@ namespace mapManager{
 		Eigen::Vector3d currMapRangeMin_ = Eigen::Vector3d (0, 0, 0); 
 		Eigen::Vector3d currMapRangeMax_ = Eigen::Vector3d (0, 0, 0);
 		bool useFreeRegions_ = false;
+		mutable std::recursive_mutex snapshotMutex_;
+		uint64_t mapVersion_ = 0;
 		
 
 		// STATUS
@@ -205,6 +223,7 @@ namespace mapManager{
 		double getRes();
 		void getMapRange(Eigen::Vector3d& mapSizeMin, Eigen::Vector3d& mapSizeMax);
 		void getCurrMapRange(Eigen::Vector3d& currRangeMin, Eigen::Vector3d& currRangeMax);
+		OccupancyMapSnapshot captureSnapshot() const;
 		bool castRay(const Eigen::Vector3d& start, const Eigen::Vector3d& direction, Eigen::Vector3d& end, double maxLength=5.0, bool ignoreUnknown=true);
 		void getRobotSize(Eigen::Vector3d &robotSize);
 
@@ -357,6 +376,7 @@ namespace mapManager{
 	}
 
 	inline void occMap::setFree(const Eigen::Vector3d& pos){
+		std::lock_guard<std::recursive_mutex> lock(this->snapshotMutex_);
 		if (not this->isInMap(pos)) return;
 		Eigen::Vector3i idx;
 		this->posToIndex(pos, idx);
@@ -364,6 +384,7 @@ namespace mapManager{
 	}
 
 	inline void occMap::setFree(const Eigen::Vector3i& idx){
+		std::lock_guard<std::recursive_mutex> lock(this->snapshotMutex_);
 		if (not this->isInMap(idx)) return;
 		int address = this->indexToAddress(idx);
 		this->occupancy_[address] = this->pMinLog_;
@@ -389,9 +410,11 @@ namespace mapManager{
 				}
 			}
 		}
+		++this->mapVersion_;
 	}
 
 	inline void occMap::freeRegion(const Eigen::Vector3d& pos1, const Eigen::Vector3d& pos2){
+		std::lock_guard<std::recursive_mutex> lock(this->snapshotMutex_);
 		Eigen::Vector3i idx1, idx2;
 		this->posToIndex(pos1, idx1);
 		this->posToIndex(pos2, idx2);
@@ -407,18 +430,21 @@ namespace mapManager{
 	}
 
 	inline void occMap::freeRegions(const std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>& freeRegions){
+		std::lock_guard<std::recursive_mutex> lock(this->snapshotMutex_);
 		for (std::pair<Eigen::Vector3d, Eigen::Vector3d> freeRegion : freeRegions){
 			this->freeRegion(freeRegion.first, freeRegion.second);
 		}
 	}
 
 	inline void occMap::freeHistRegions(){
+		std::lock_guard<std::recursive_mutex> lock(this->snapshotMutex_);
 		for (std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> freeRegions : this->histFreeRegions_){
 			this->freeRegions(freeRegions);
 		}
 	}
 
 	inline void occMap::updateFreeRegions(const std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>& freeRegions){
+		std::lock_guard<std::recursive_mutex> lock(this->snapshotMutex_);
 		this->freeRegions_ = freeRegions;
 		if (this->histFreeRegions_.size() <= 5){
 			this->histFreeRegions_.push_back(freeRegions);
@@ -435,6 +461,7 @@ namespace mapManager{
 		else{
 			this->useFreeRegions_ = false;
 		}
+		++this->mapVersion_;
 	}
 
 
