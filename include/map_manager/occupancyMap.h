@@ -224,6 +224,7 @@ namespace mapManager{
 		void getMapRange(Eigen::Vector3d& mapSizeMin, Eigen::Vector3d& mapSizeMax);
 		void getCurrMapRange(Eigen::Vector3d& currRangeMin, Eigen::Vector3d& currRangeMax);
 		OccupancyMapSnapshot captureSnapshot() const;
+		uint64_t getMapVersion() const;
 		bool castRay(const Eigen::Vector3d& start, const Eigen::Vector3d& direction, Eigen::Vector3d& end, double maxLength=5.0, bool ignoreUnknown=true);
 		void getRobotSize(Eigen::Vector3d &robotSize);
 
@@ -467,6 +468,11 @@ namespace mapManager{
 
 	inline double occMap::getRes(){
 		return this->mapRes_;
+	}
+
+	inline uint64_t occMap::getMapVersion() const{
+		std::lock_guard<std::recursive_mutex> lock(this->snapshotMutex_);
+		return this->mapVersion_;
 	}
 
 	inline void occMap::getMapRange(Eigen::Vector3d& mapSizeMin, Eigen::Vector3d& mapSizeMax){
