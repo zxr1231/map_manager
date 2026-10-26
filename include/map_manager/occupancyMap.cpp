@@ -312,6 +312,8 @@ namespace mapManager{
 			this->sensorObservationTracker_.reset(reservedSize);
 			if (this->trackValidDepthObservations_){
 				this->validSensorObservationTracker_.reset(reservedSize);
+				this->validHitFrameCount_.assign(reservedSize, 0);
+				this->validHitLastRaycastId_.assign(reservedSize, -1);
 			}
 
 			cout << this->hint_ << ": Map size: " << "[" << mapSizeVec[0] << ", " << mapSizeVec[1] << ", " << mapSizeVec[2] << "]" << endl;
@@ -795,6 +797,9 @@ namespace mapManager{
 		snapshot.pOccLog = this->pOccLog_;
 		snapshot.occupancy = this->occupancy_;
 		snapshot.inflated = this->occupancyInflated_;
+		if (this->trackValidDepthObservations_){
+			snapshot.validHitFrameCount = this->validHitFrameCount_;
+		}
 		return snapshot;
 	}
 
@@ -1096,6 +1101,15 @@ namespace mapManager{
 		msg.addresses.assign(pending.begin(), pending.end());
 		this->validSensorObservationDeltaPub_.publish(msg);
 		this->validSensorObservationTracker_.clearPending();
+	}
+
+	bool occMap::hasValidDepthEvidence(const Eigen::Vector3d& pos){
+		std::lock_guard<std::recursive_mutex> lock(this->snapshotMutex_);
+		if (!this->trackValidDepthObservations_ or !this->isInMap(pos)) return false;
+		Eigen::Vector3i idx;
+		this->posToIndex(pos, idx);
+		if (!this->isInMap(idx)) return false;
+		return this->validSensorObservationTracker_.hasObserved(this->indexToAddress(idx));
 	}
 
 	void occMap::cleanLocalMap(){

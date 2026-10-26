@@ -45,6 +45,7 @@ namespace mapManager{
 		double pOccLog = 0.0;
 		std::vector<double> occupancy;
 		std::vector<bool> inflated;
+		std::vector<std::uint8_t> validHitFrameCount;
 	};
 
 	class occMap{
@@ -158,6 +159,8 @@ namespace mapManager{
 			std::vector<int> flagTraverse_, flagRayend_;
 			SensorObservationTracker sensorObservationTracker_;
 			SensorObservationTracker validSensorObservationTracker_;
+			std::vector<std::uint8_t> validHitFrameCount_;
+			std::vector<int> validHitLastRaycastId_;
 			uint64_t sensorObservationSequence_ = 0;
 			uint64_t validSensorObservationSequence_ = 0;
 		std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> freeRegions_;
@@ -224,6 +227,7 @@ namespace mapManager{
 		bool isInflatedFree(const Eigen::Vector3d& pos);
 		bool isInflatedFreeLine(const Eigen::Vector3d& pos1, const Eigen::Vector3d& pos2);
 		bool isUnknown(const Eigen::Vector3d& pos);
+		bool hasValidDepthEvidence(const Eigen::Vector3d& pos);
 		bool isUnknown(const Eigen::Vector3i& idx);
 		void setFree(const Eigen::Vector3d& pos);
 		void setFree(const Eigen::Vector3i& idx);
@@ -692,6 +696,11 @@ namespace mapManager{
 		this->sensorObservationTracker_.mark(voxelID);
 		if (this->trackValidDepthObservations_ && this->currentRayValid_){
 			this->validSensorObservationTracker_.mark(voxelID);
+			if (isOccupied && static_cast<std::size_t>(voxelID) < this->validHitFrameCount_.size() &&
+			    this->validHitLastRaycastId_[voxelID] != this->raycastNum_){
+				this->validHitLastRaycastId_[voxelID] = this->raycastNum_;
+				if (this->validHitFrameCount_[voxelID] < 255) ++this->validHitFrameCount_[voxelID];
+			}
 		}
 		return voxelID;
 	}

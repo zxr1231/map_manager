@@ -23,6 +23,8 @@ class InstrumentedOccMap : public mapManager::occMap {
     occupancyInflated_.assign(count, true);
     sensorObservationTracker_.reset(count);
     validSensorObservationTracker_.reset(count);
+    validHitFrameCount_.assign(count, 0);
+    validHitLastRaycastId_.assign(count, -1);
     trackValidDepthObservations_ = true;
   }
 
@@ -38,6 +40,14 @@ class InstrumentedOccMap : public mapManager::occMap {
     indexToPos(index, position);
     currentRayValid_ = valid;
     updateOccupancyInfo(position, false);
+    currentRayValid_ = false;
+  }
+  void simulateValidHitFrame(const Eigen::Vector3i& index, int frameId) {
+    Eigen::Vector3d position;
+    indexToPos(index, position);
+    raycastNum_ = frameId;
+    currentRayValid_ = true;
+    updateOccupancyInfo(position, true);
     currentRayValid_ = false;
   }
   std::vector<double> projectSyntheticDepth(bool strict) {
@@ -83,6 +93,10 @@ TEST(SensorObservationTracker, CountsEachValidAddressOnce) {
   ASSERT_EQ(tracker.pending().size(), 1u);
   EXPECT_EQ(tracker.pending().front(), 3u);
   EXPECT_EQ(tracker.observedTotal(), 2u);
+  EXPECT_TRUE(tracker.hasObserved(2));
+  EXPECT_TRUE(tracker.hasObserved(3));
+  EXPECT_FALSE(tracker.hasObserved(1));
+  EXPECT_FALSE(tracker.hasObserved(-1));
 }
 
 TEST(SensorObservationTracker, ResetClearsUnionAndPendingDelta) {
@@ -126,6 +140,21 @@ TEST(DepthEvidence, ValidOnlyProvenanceExcludesInvalidRayMapUpdates) {
   map.simulateSensorUpdate(Eigen::Vector3i(1, 0, 0), false);
   EXPECT_EQ(map.observedTotal(), 2u);
   EXPECT_EQ(map.validObservedTotal(), 1u);
+  EXPECT_TRUE(map.hasValidDepthEvidence(Eigen::Vector3d(0.5, 0.5, 0.5)));
+  EXPECT_FALSE(map.hasValidDepthEvidence(Eigen::Vector3d(1.5, 0.5, 0.5)));
+  EXPECT_FALSE(map.hasValidDepthEvidence(Eigen::Vector3d(3.0, 0.5, 0.5)));
+}
+
+TEST(DepthEvidence, StableSurfaceSupportCountsDistinctDepthFrames) {
+  InstrumentedOccMap map;
+  map.initializeSyntheticMap();
+  const Eigen::Vector3i address(1, 1, 1);
+  map.simulateValidHitFrame(address, 1);
+  map.simulateValidHitFrame(address, 1);
+  EXPECT_EQ(map.captureSnapshot().validHitFrameCount[13], 1u);
+  map.simulateValidHitFrame(address, 2);
+  map.simulateValidHitFrame(address, 3);
+  EXPECT_EQ(map.captureSnapshot().validHitFrameCount[13], 3u);
 }
 
 TEST(SensorObservationTracker, ArtificialMapClearingDoesNotCreateSensorProvenance) {

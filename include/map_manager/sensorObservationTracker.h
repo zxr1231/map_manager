@@ -28,6 +28,10 @@ class SensorObservationTracker {
   void clearPending() { pending_.clear(); }
   std::uint64_t observedTotal() const { return observedTotal_; }
   std::size_t voxelCount() const { return observed_.size(); }
+  bool hasObserved(int address) const {
+    return address >= 0 && static_cast<std::size_t>(address) < observed_.size() &&
+           observed_[address] != 0;
+  }
 
  private:
   std::vector<std::uint8_t> observed_;
