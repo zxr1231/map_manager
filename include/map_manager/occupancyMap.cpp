@@ -135,6 +135,10 @@ namespace mapManager{
 		else{
 			cout << this->hint_ << ": Depth depth max value: " << this->depthMaxValue_ << endl;
 		}
+		this->nh_.param(this->ns_ + "/depth_evidence/filter_invalid",
+		                this->filterInvalidDepth_, false);
+		this->nh_.param(this->ns_ + "/depth_evidence/track_valid_observations",
+		                this->trackValidDepthObservations_, false);
 
 		// depth filter margin
 		if (not this->nh_.getParam(this->ns_ + "/depth_filter_margin", this->depthFilterMargin_)){
@@ -173,6 +177,7 @@ namespace mapManager{
 			cout << this->hint_ << ": Depth image rows: " << this->imgRows_ << endl;
 		}
 		this->projPoints_.resize(this->imgCols_ * this->imgRows_ / (this->skipPixel_ * this->skipPixel_));
+		this->projPointsValid_.resize(this->projPoints_.size(), 0);
 		// ------------------------------------------------------------------------------------
 
 
@@ -305,6 +310,9 @@ namespace mapManager{
 			this->flagTraverse_.resize(reservedSize, -1);
 			this->flagRayend_.resize(reservedSize, -1);
 			this->sensorObservationTracker_.reset(reservedSize);
+			if (this->trackValidDepthObservations_){
+				this->validSensorObservationTracker_.reset(reservedSize);
+			}
 
 			cout << this->hint_ << ": Map size: " << "[" << mapSizeVec[0] << ", " << mapSizeVec[1] << ", " << mapSizeVec[2] << "]" << endl;
 		}
@@ -537,6 +545,10 @@ namespace mapManager{
 		this->mapExploredPub_ = this->nh_.advertise<sensor_msgs::PointCloud2>(this->ns_+"/explored_voxel_map",10);
 		this->sensorObservationDeltaPub_ = this->nh_.advertise<map_manager::ObservedVoxelDelta>(
 			this->ns_ + "/sensor_observation_delta", 100);
+		if (this->trackValidDepthObservations_){
+			this->validSensorObservationDeltaPub_ = this->nh_.advertise<map_manager::ObservedVoxelDelta>(
+				this->ns_ + "/valid_sensor_observation_delta", 100);
+		}
 		// publish service
 		this->collisionCheckServer_ = this->nh_.advertiseService(this->ns_ + "/check_pos_collision", &occMap::checkCollision, this);
 		this->raycastServer_ = this->nh_.advertiseService(this->ns_ + "/raycast", &occMap::getRayCast, this);
@@ -587,10 +599,41 @@ namespace mapManager{
 		return true;
 	}
 	
+	void occMap::captureDepthValidity(const cv::Mat& image, const std::string& encoding){
+		this->depthRawValidity_.create(image.rows, image.cols, CV_8UC1);
+		this->depthRawValidity_.setTo(cv::Scalar(0));
+		if (encoding == sensor_msgs::image_encodings::TYPE_32FC1){
+			for (int v=0; v<image.rows; ++v){
+				const float* src = image.ptr<float>(v);
+				std::uint8_t* dst = this->depthRawValidity_.ptr<std::uint8_t>(v);
+				for (int u=0; u<image.cols; ++u){
+					dst[u] = validDepthHit(src[u], this->depthMinValue_, this->depthMaxValue_);
+				}
+			}
+		}
+		else if (encoding == sensor_msgs::image_encodings::TYPE_16UC1){
+			for (int v=0; v<image.rows; ++v){
+				const std::uint16_t* src = image.ptr<std::uint16_t>(v);
+				std::uint8_t* dst = this->depthRawValidity_.ptr<std::uint8_t>(v);
+				for (int u=0; u<image.cols; ++u){
+					dst[u] = validDepthHit(src[u], this->depthScale_,
+					                       this->depthMinValue_, this->depthMaxValue_);
+				}
+			}
+		}
+		else{
+			ROS_ERROR_THROTTLE(5.0, "depth evidence: unsupported image encoding %s",
+			                   encoding.c_str());
+		}
+	}
+
 	void occMap::depthPoseCB(const sensor_msgs::ImageConstPtr& img, const geometry_msgs::PoseStampedConstPtr& pose){
 		this->sensorStamp_ = img->header.stamp;
 		// store current depth image
 		cv_bridge::CvImagePtr imgPtr = cv_bridge::toCvCopy(img, img->encoding);
+		if (this->filterInvalidDepth_ or this->trackValidDepthObservations_){
+			this->captureDepthValidity(imgPtr->image, img->encoding);
+		}
 		if (img->encoding == sensor_msgs::image_encodings::TYPE_32FC1){
 			(imgPtr->image).convertTo(imgPtr->image, CV_16UC1, this->depthScale_);
 		}
@@ -617,6 +660,9 @@ namespace mapManager{
 		this->sensorStamp_ = img->header.stamp;
 		// store current depth image
 		cv_bridge::CvImagePtr imgPtr = cv_bridge::toCvCopy(img, img->encoding);
+		if (this->filterInvalidDepth_ or this->trackValidDepthObservations_){
+			this->captureDepthValidity(imgPtr->image, img->encoding);
+		}
 		if (img->encoding == sensor_msgs::image_encodings::TYPE_32FC1){
 			(imgPtr->image).convertTo(imgPtr->image, CV_16UC1, this->depthScale_);
 		}
@@ -769,9 +815,20 @@ namespace mapManager{
 
 		// iterate through each pixel in the depth image
 		for (int v=this->depthFilterMargin_; v<rows-this->depthFilterMargin_; v=v+this->skipPixel_){ // row
-			rowPtr = this->depthImage_.ptr<uint16_t>(v) + this->depthFilterMargin_;
+			uint16_t* rowStart = this->depthImage_.ptr<uint16_t>(v);
+			rowPtr = rowStart + this->depthFilterMargin_;
 			for (int u=this->depthFilterMargin_; u<cols-this->depthFilterMargin_; u=u+this->skipPixel_){ // column
-				depth = (*rowPtr) * inv_factor;
+				// Keep the historical cursor behavior for the frozen Legacy
+				// baseline.  The strict evidence mode indexes the actual image
+				// column so a rejected pixel cannot repeat in the next sample.
+				uint16_t* samplePtr = this->filterInvalidDepth_ ? rowStart + u : rowPtr;
+				const int sampleColumn = static_cast<int>(samplePtr - rowStart);
+				const bool rawValid = !this->depthRawValidity_.empty() &&
+					this->depthRawValidity_.at<std::uint8_t>(v, sampleColumn) != 0;
+				if (this->filterInvalidDepth_ && !rawValid){
+					continue;
+				}
+				depth = (*samplePtr) * inv_factor;
 				
 				// if (*rowPtr == 0) {
 				// 	depth = this->raycastMaxLength_ + 0.1;
@@ -787,7 +844,7 @@ namespace mapManager{
 				// 	continue;
 				// }
 
-				if (*rowPtr == 0) {
+				if (*samplePtr == 0) {
 					depth = this->raycastMaxLength_ + 0.1;
 				} else if (depth < this->depthMinValue_) {
 					continue;
@@ -795,7 +852,9 @@ namespace mapManager{
 					depth = this->raycastMaxLength_ + 0.1;
 				}
 
-				rowPtr =  rowPtr + this->skipPixel_;
+				if (!this->filterInvalidDepth_){
+					rowPtr = rowPtr + this->skipPixel_;
+				}
 
 				// get 3D point in camera frame
 				currPointCam(0) = (u - this->cx_) * depth * inv_fx;
@@ -811,6 +870,7 @@ namespace mapManager{
 
 				// store current point
 				this->projPoints_[this->projPointsNum_] = currPointMap;
+				this->projPointsValid_[this->projPointsNum_] = rawValid;
 				this->projPointsNum_ = this->projPointsNum_ + 1;
 			}
 		} 
@@ -819,6 +879,7 @@ namespace mapManager{
 	void occMap::getPointcloud(){
 		this->projPointsNum_ = this->pointcloud_.size();
 		this->projPoints_.resize(this->projPointsNum_);
+		this->projPointsValid_.resize(this->projPointsNum_, 1);
 		Eigen::Vector3d currPointCam, currPointMap;
 		for (int i=0; i<this->projPointsNum_; ++i){
 			currPointCam(0) = this->pointcloud_.points[i].x;
@@ -850,6 +911,8 @@ namespace mapManager{
 		double length;
 		for (int i=0; i<this->projPointsNum_; ++i){
 			currPoint = this->projPoints_[i];
+			this->currentRayValid_ = this->trackValidDepthObservations_ &&
+				this->projPointsValid_[i] != 0;
 			if (std::isnan(currPoint(0)) or std::isnan(currPoint(1)) or std::isnan(currPoint(2))){
 				continue; // nan points can happen when we are using pointcloud as input
 			}
@@ -996,7 +1059,9 @@ namespace mapManager{
 				}
 			}
 		}
+		this->currentRayValid_ = false;
 		this->publishSensorObservationDelta();
+		this->publishValidSensorObservationDelta();
 
 	}
 
@@ -1014,6 +1079,23 @@ namespace mapManager{
 		msg.addresses.assign(pending.begin(), pending.end());
 		this->sensorObservationDeltaPub_.publish(msg);
 		this->sensorObservationTracker_.clearPending();
+	}
+
+	void occMap::publishValidSensorObservationDelta(){
+		if (!this->trackValidDepthObservations_) return;
+		const std::vector<uint32_t>& pending = this->validSensorObservationTracker_.pending();
+		if (pending.empty() or this->validSensorObservationDeltaPub_.getNumSubscribers() == 0){
+			return;
+		}
+		map_manager::ObservedVoxelDelta msg;
+		msg.header.stamp = this->sensorStamp_.isZero() ? ros::Time::now() : this->sensorStamp_;
+		msg.header.frame_id = "map";
+		msg.sequence = ++this->validSensorObservationSequence_;
+		msg.observed_total = this->validSensorObservationTracker_.observedTotal();
+		msg.raycast_id = static_cast<uint32_t>(this->raycastNum_);
+		msg.addresses.assign(pending.begin(), pending.end());
+		this->validSensorObservationDeltaPub_.publish(msg);
+		this->validSensorObservationTracker_.clearPending();
 	}
 
 	void occMap::cleanLocalMap(){

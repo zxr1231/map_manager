@@ -26,6 +26,7 @@
 #include <map_manager/ObservedVoxelDelta.h>
 #include <map_manager/RayCast.h>
 #include <map_manager/sensorObservationTracker.h>
+#include <map_manager/depthEvidence.h>
 #include <thread>
 #include <mutex>
 #include <cstdint>
@@ -80,6 +81,7 @@ namespace mapManager{
 			ros::Publisher map2DPub_;
 			ros::Publisher mapExploredPub_;
 			ros::Publisher sensorObservationDeltaPub_;
+			ros::Publisher validSensorObservationDeltaPub_;
 		ros::ServiceServer collisionCheckServer_;
 		ros::ServiceServer raycastServer_;
 
@@ -99,6 +101,8 @@ namespace mapManager{
 		double fx_, fy_, cx_, cy_; // depth camera intrinsics
 		double depthScale_; // value / depthScale
 		double depthMinValue_, depthMaxValue_;
+		bool filterInvalidDepth_ = false;
+		bool trackValidDepthObservations_ = false;
 		int depthFilterMargin_, skipPixel_; // depth filter margin
 		int imgCols_, imgRows_;
 		Eigen::Matrix4d body2Cam_; // from body frame to camera frame
@@ -132,6 +136,9 @@ namespace mapManager{
 		// -----------------------------------------------------------------
 		// SENSOR DATA
 		cv::Mat depthImage_;
+		cv::Mat depthRawValidity_;
+		std::vector<std::uint8_t> projPointsValid_;
+		bool currentRayValid_ = false;
 			pcl::PointCloud<pcl::PointXYZ> pointcloud_;
 			Eigen::Vector3d position_; // current position
 			Eigen::Matrix3d orientation_; // current orientation
@@ -150,7 +157,9 @@ namespace mapManager{
 			int raycastNum_ = 0;
 			std::vector<int> flagTraverse_, flagRayend_;
 			SensorObservationTracker sensorObservationTracker_;
+			SensorObservationTracker validSensorObservationTracker_;
 			uint64_t sensorObservationSequence_ = 0;
+			uint64_t validSensorObservationSequence_ = 0;
 		std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>> freeRegions_;
 		std::deque<std::vector<std::pair<Eigen::Vector3d, Eigen::Vector3d>>> histFreeRegions_;
 		Eigen::Vector3d currMapRangeMin_ = Eigen::Vector3d (0, 0, 0); 
@@ -189,6 +198,7 @@ namespace mapManager{
 		// callback
 		void depthPoseCB(const sensor_msgs::ImageConstPtr& img, const geometry_msgs::PoseStampedConstPtr& pose);
 		void depthOdomCB(const sensor_msgs::ImageConstPtr& img, const nav_msgs::OdometryConstPtr& odom);
+		void captureDepthValidity(const cv::Mat& image, const std::string& encoding);
 		void pointcloudPoseCB(const sensor_msgs::PointCloud2ConstPtr& pointcloud, const geometry_msgs::PoseStampedConstPtr& pose);
 		void pointcloudOdomCB(const sensor_msgs::PointCloud2ConstPtr& pointcloud, const nav_msgs::OdometryConstPtr& odom);
 		void updateOccupancyCB(const ros::TimerEvent& );
@@ -199,6 +209,7 @@ namespace mapManager{
 			void getPointcloud();
 			void raycastUpdate();
 			void publishSensorObservationDelta();
+			void publishValidSensorObservationDelta();
 			void cleanLocalMap();
 		void inflateLocalMap();
 
@@ -679,6 +690,9 @@ namespace mapManager{
 			this->countHit_[voxelID] += 1;
 		}
 		this->sensorObservationTracker_.mark(voxelID);
+		if (this->trackValidDepthObservations_ && this->currentRayValid_){
+			this->validSensorObservationTracker_.mark(voxelID);
+		}
 		return voxelID;
 	}
 
